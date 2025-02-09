@@ -153,7 +153,7 @@ class GraphRAGProcessor:
 
 
     ##### semantic / linking
-        def create_semantic_relationships(self, doc_id: str):
+    def create_semantic_relationships(self, doc_id: str):
         # Get all chunks for a document
         chunks = self.neo4j.run_query("""
             MATCH (d:Document {id: $doc_id})-[:HAS_CHUNK]->(c:Chunk)
@@ -198,355 +198,155 @@ class GraphRAGProcessor:
                 "chunk_id": chunk_id
             })
 
-    async def process_document(self, file_path: str, chunk_size: int = 500, chunk_overlap: int = 100, batch_size: int = 10) -> Dict:
-        """
-        Process a document with batched embedding generation.
-        
-        Args:
-            file_path: Path to the document
-            chunk_size: Size of text chunks
-            chunk_overlap: Overlap between chunks
-            batch_size: Number of chunks to process in each embedding batch
-        """
+    async def process_document(self, file_path: str, chunk_size: int = 500, chunk_overlap: int = 100) -> Dict:
+        """Process a document asynchronously"""
         try:
-            # Extract and chunk text
+            # Extract text synchronously since it's file I/O
             text = self.extract_text_from_file(file_path)
             if not text.strip():
                 return {"status": "error", "message": "Empty file or text extraction failed."}
-    
+
+            # Split text into chunks
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap
             )
             chunks = splitter.split_text(text)
-            
-            # Generate document ID
             document_name = os.path.basename(file_path)
+            
             unique_id = uuid.uuid4().hex
             doc_id = f"doc-{document_name}-{unique_id}"
-            await self.create_semantic_relationships(doc_id)
 
-            for chunk in chunks:
-                await self.extract_and_link_entities(chunk.text, chunk.id)
-    
-            # Create Document node
+            # Create Document node (synchronous database operation)
             self.neo4j.run_query(
                 """
                 CREATE (d:Document {id: $doc_id})
-                SET d.file_name = $file_name, 
-                    d.upload_date = timestamp(),
-                    d.chunk_count = $chunk_count
+                SET d.file_name = $file_name, d.upload_date = timestamp()
                 """,
-                {
-                    "doc_id": doc_id, 
-                    "file_name": document_name,
-                    "chunk_count": len(chunks)
-                }
+                {"doc_id": doc_id, "file_name": document_name}
             )
-    
-            # Process chunks in batches
-            total_chunks = 0
-            for batch_start in range(0, len(chunks), batch_size):
-                # Get the current batch
-                batch_end = min(batch_start + batch_size, len(chunks))
-                current_batch = chunks[batch_start:batch_end]
+            
+            # Process chunks
+            for idx, chunk_text in enumerate(chunks):
+                # Generate embedding synchronously
+                embedding = self.embeddings.embed_query(chunk_text)
                 
-                try:
-                    # Generate embeddings for the entire batch
-                    batch_embeddings = self.embeddings.embed_documents(current_batch)
-                    
-                    # Prepare batch data
-                    batch_data = []
-                    for idx, (chunk_text, embedding) in enumerate(zip(current_batch, batch_embeddings)):
-                        global_idx = batch_start + idx
-                        chunk_id = f"{doc_id}-chunk-{global_idx}"
-                        
-                        batch_data.append({
-                            "chunk_id": chunk_id,
-                            "chunk_text": chunk_text,
-                            "embedding": embedding,
-                            "idx": global_idx,
-                            "doc_id": doc_id
-                        })
-                    
-                    # Store all chunks in the batch
-                    self.neo4j.run_query(
-                        """
-                        UNWIND $batch_data AS data
-                        CREATE (c:Chunk {
-                            id: data.chunk_id,
-                            text: data.chunk_text,
-                            embedding: data.embedding,
-                            index: data.idx
-                        })
-                        WITH c, data
-                        MATCH (d:Document {id: data.doc_id})
-                        MERGE (d)-[:HAS_CHUNK]->(c)
-                        """,
-                        {"batch_data": batch_data}
-                    )
-                    
-                    total_chunks += len(current_batch)
-                    
-                    # Log progress
-                    progress = (batch_end / len(chunks)) * 100
-                    logging.info(f"Processing document: {progress:.1f}% complete")
-                    
-                except Exception as e:
-                    logging.error(f"Error processing batch {batch_start}-{batch_end}: {e}")
-                    # Continue with next batch instead of failing entirely
-                    continue
+                # Store in Neo4j synchronously
+                self.neo4j.run_query(
+                    """
+                    CREATE (c:Chunk {id: $chunk_id})
+                    SET c.text = $chunk_text, 
+                        c.embedding = $embedding,
+                        c.index = $idx
+                    WITH c
+                    MATCH (d:Document {id: $doc_id})
+                    MERGE (d)-[:HAS_CHUNK]->(c)
+                    """,
+                    {
+                        "chunk_id": f"{doc_id}-chunk-{idx}",
+                        "chunk_text": chunk_text,
+                        "embedding": embedding,
+                        "idx": idx,
+                        "doc_id": doc_id
+                    }
+                )
             
             return {
                 "status": "success",
                 "file": document_name,
-                "chunks_stored": total_chunks,
-                "total_chunks": len(chunks)
+                "chunks_stored": len(chunks)
             }
             
         except Exception as e:
             logging.error(f"Error processing document: {e}")
-            # Attempt to clean up if document node was created
-            try:
-                self.neo4j.run_query(
-                    """
-                    MATCH (d:Document {id: $doc_id})
-                    DETACH DELETE d
-                    """,
-                    {"doc_id": doc_id}
-                )
-            except:
-                pass
             return {"status": "error", "message": str(e)}
 
-    def similarity_search(self, query: str, limit: int = 5, context_window: int = 1) -> List[Dict[str, Any]]:
-        """
-        Enhanced similarity search with context awareness and relationship traversal.
-        
-        Args:
-            query: The search query
-            limit: Number of primary results to return
-            context_window: Number of adjacent chunks to include before/after matches
-        """
-        query_embedding = self.embeddings.embed_query(query)
-        
-        # Enhanced vector search query with context and relationships
-        vector_search_query = """
-        // Initial vector similarity search
-        CALL db.index.vector.queryNodes(
-            'chunk_embeddings',
-            $k,
-            $query_embedding
-        ) YIELD node, score
-        WITH node, score
-        
-        // Get document information
-        MATCH (doc:Document)-[:HAS_CHUNK]->(node)
-        
-        // Get surrounding context chunks
-        MATCH (doc)-[:HAS_CHUNK]->(context:Chunk)
-        WHERE context.index >= node.index - $window 
-        AND context.index <= node.index + $window
-        
-        // Aggregate results
-        WITH 
-            node as main_chunk,
-            score as similarity_score,
-            doc.file_name as source_doc,
-            collect(DISTINCT {
-                text: context.text,
-                index: context.index,
-                relative_position: context.index - node.index
-            }) as context_chunks
-        
-        // Order by score and get specified limit
-        ORDER BY similarity_score DESC
-        LIMIT $limit
-        
-        RETURN {
-            chunk_id: main_chunk.id,
-            chunk_text: main_chunk.text,
-            chunk_index: main_chunk.index,
-            similarity_score: similarity_score,
-            source_document: source_doc,
-            context_chunks: context_chunks
-        } as result
-        """
-        
-        try:
-            results = self.neo4j.run_query(
-                vector_search_query,
-                {
-                    "k": limit * 2,  # Get more initial results for filtering
-                    "limit": limit,
-                    "window": context_window,
-                    "query_embedding": query_embedding
-                }
-            )
-            
-            # Process and format results
-            formatted_results = []
-            for item in results:
-                result = item['result']  # Neo4j wraps our result object
-                
-                # Sort context chunks by relative position
-                context = sorted(
-                    result['context_chunks'], 
-                    key=lambda x: x['relative_position']
-                )
-                
-                # Format the result with context
-                formatted_result = {
-                    "chunk_id": result['chunk_id'],
-                    "chunk_text": result['chunk_text'],
-                    "score": result['similarity_score'],
-                    "source": result['source_document'],
-                    "index": result['chunk_index'],
-                    "context": {
-                        "before": [c['text'] for c in context if c['relative_position'] < 0],
-                        "after": [c['text'] for c in context if c['relative_position'] > 0]
-                    }
-                }
-                
-                formatted_results.append(formatted_result)
-            
-            return formatted_results
-            
-        except Exception as e:
-            logging.error(f"Error in similarity search: {e}")
-            # Fallback to basic search if advanced query fails
-            fallback_query = """
-            CALL db.index.vector.queryNodes(
-                'chunk_embeddings',
-                $k,
-                $query_embedding
-            ) YIELD node, score
-            RETURN 
-                node.id AS chunk_id,
-                node.text AS chunk_text,
-                score
-            """
-            
-            results = self.neo4j.run_query(
-                fallback_query,
-                {
-                    "k": limit,
-                    "query_embedding": query_embedding
-                }
-            )
-            
-            return [{
-                "chunk_id": item["chunk_id"],
-                "chunk_text": item["chunk_text"],
-                "score": item["score"]
-            } for item in results]
-
-
-
     
+    def similarity_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+           """Non-async similarity search"""
+           query_embedding = self.embeddings.embed_query(query)
+           
+           vector_search_query = """
+           CALL db.index.vector.queryNodes(
+               'chunk_embeddings',
+               $k,
+               $query_embedding
+           ) YIELD node, score
+           RETURN 
+               node.id AS chunk_id,
+               node.text AS chunk_text,
+               score
+           """
+           
+           results = self.neo4j.run_query(
+               vector_search_query,
+               {
+                   "k": limit,
+                   "query_embedding": query_embedding
+               }
+           )
+           
+           return [{
+               "chunk_id": item["chunk_id"],
+               "chunk_text": item["chunk_text"],
+               "score": item["score"]
+           } for item in results]
+
+
+
+    def verify_graph_structure(self):
+        """Verify the graph structure is correct"""
+        checks = self.neo4j.run_query("""
+            MATCH (c:Chunk)
+            WHERE NOT exists(c.index)
+            RETURN count(c) as missing_index
+        """)
+        
+        if checks[0]['missing_index'] > 0:
+            logging.warning(f"Found {checks[0]['missing_index']} chunks without index property") 
 
     async def query_knowledge(self, user_query: str) -> Dict:
-        """
-        Enhanced RAG query with better context gathering and structured output.
-        """
+        """Query knowledge base asynchronously"""
         try:
-            # Get relevant chunks with expanded context
-            relevant_chunks = self.neo4j.run_query("""
-                // First get similar chunks using vector search
-                CALL db.index.vector.queryNodes('chunk_embeddings', $k, $query_embedding)
-                YIELD node, score
-                WITH node, score
-                
-                // Get document info for context
-                MATCH (doc:Document)-[:HAS_CHUNK]->(node)
-                
-                // Get adjacent chunks for additional context
-                OPTIONAL MATCH (doc)-[:HAS_CHUNK]->(adjacent:Chunk)
-                WHERE adjacent.index IN [node.index - 1, node.index + 1]
-                
-                RETURN 
-                    node.id AS chunk_id,
-                    node.text AS chunk_text,
-                    node.index AS chunk_index,
-                    score,
-                    doc.file_name AS source_doc,
-                    collect(adjacent.text) AS adjacent_chunks
-            """, {
-                "k": 5,
-                "query_embedding": self.embeddings.embed_query(user_query)
-            })
-    
-            if not relevant_chunks:
+            # Similarity search is synchronous
+            top_chunks = self.similarity_search(user_query, limit=5)
+            
+            if not top_chunks:
                 return {
                     "answer": "No relevant information found in the database.",
                     "search_results": []
                 }
-    
-            # Structure context with document source and adjacent chunks
-            context_sections = []
-            for chunk in relevant_chunks:
-                # Format main chunk with source and score
-                main_chunk = (
-                    f"Source: {chunk['source_doc']}, Chunk {chunk['chunk_index']}\n"
-                    f"Relevance: {round(chunk['score'], 2)}\n"
-                    f"Content: {chunk['chunk_text']}"
-                )
-                context_sections.append(main_chunk)
-                
-                # Add adjacent chunks if available
-                if chunk['adjacent_chunks']:
-                    context_sections.append(
-                        "Related Context:\n" + 
-                        "\n".join(chunk['adjacent_chunks'])
-                    )
-    
-            context_text = "\n\n---\n\n".join(context_sections)
-    
-            # Enhanced system prompt with specific instructions
-            system_prompt = """You are a knowledgeable assistant analyzing provided document chunks.
             
-    Guidelines:
-    - Base your answer only on the provided context
-    - If the context doesn't fully answer the question, acknowledge the limitations
-    - Quote relevant parts of the context to support your answer
-    - If you need to connect information from multiple chunks, explain how they relate
-    - If there are contradictions in the context, point them out
-    
-    Context:
-    {context}
-    
-    Remember to maintain accuracy and cite specific chunks when possible.""".format(context=context_text)
-    
+            # Create prompt
+            context_text = "\n\n".join(
+                f"Chunk (score={round(c['score'],2)}): {c['chunk_text']}" 
+                for c in top_chunks
+            )
+            system_prompt = (
+                "You are a helpful assistant that uses the provided context to answer user questions.\n"
+                "Use only the context below to answer accurately.\n\n"
+                f"Context:\n{context_text}\n\n"
+                "Answer the user's question as best you can."
+            )
+            
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_query)
             ]
-    
-            # Generate response with slightly higher temperature for more natural answers
-            response = await self.chat_model.agenerate(
-                [[m for m in messages]], 
-                temperature=0.3
-            )
+            
+            # This is actually async and needs await
+            response = await self.chat_model.agenerate([[m for m in messages]])
             answer_text = response.generations[0][0].text.strip()
-    
-            # Format search results for UI
-            search_results = [{
-                "chunk_id": chunk["chunk_id"],
-                "chunk_text": chunk["chunk_text"],
-                "score": chunk["score"],
-                "source": chunk["source_doc"],
-                "index": chunk["chunk_index"]
-            } for chunk in relevant_chunks]
-    
+            
             return {
                 "answer": answer_text,
-                "search_results": search_results
+                "search_results": top_chunks
             }
-    
+            
         except Exception as e:
             logging.error(f"Query error: {e}")
             return {"answer": f"Error: {str(e)}", "search_results": []}
-
+            
 # -------------------------------------------------------------------------
 # Gradio Chat Interface
 # -------------------------------------------------------------------------
