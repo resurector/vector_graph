@@ -151,20 +151,30 @@ class GraphRAGProcessor:
         else:
             raise ValueError("Unsupported file format. Use PDF, DOCX, or TXT.")
 
-    async def process_document(self, file_path: str, chunk_size: int = 500, chunk_overlap: int = 100) -> Dict:
+    async def process_document(self, file_path: str, chunk_size: int = 500, chunk_overlap: int = 100, batch_size: int = 10) -> Dict:
+        """
+        Process a document with batched embedding generation.
+        
+        Args:
+            file_path: Path to the document
+            chunk_size: Size of text chunks
+            chunk_overlap: Overlap between chunks
+            batch_size: Number of chunks to process in each embedding batch
+        """
         try:
+            # Extract and chunk text
             text = self.extract_text_from_file(file_path)
             if not text.strip():
                 return {"status": "error", "message": "Empty file or text extraction failed."}
     
-            # Split text into chunks
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap
             )
             chunks = splitter.split_text(text)
-            document_name = os.path.basename(file_path)
             
+            # Generate document ID
+            document_name = os.path.basename(file_path)
             unique_id = uuid.uuid4().hex
             doc_id = f"doc-{document_name}-{unique_id}"
     
@@ -173,52 +183,89 @@ class GraphRAGProcessor:
                 """
                 CREATE (d:Document {id: $doc_id})
                 SET d.file_name = $file_name, 
-                    d.upload_date = timestamp()
+                    d.upload_date = timestamp(),
+                    d.chunk_count = $chunk_count
                 """,
-                {"doc_id": doc_id, "file_name": document_name}
+                {
+                    "doc_id": doc_id, 
+                    "file_name": document_name,
+                    "chunk_count": len(chunks)
+                }
             )
-            
-            # Process chunks in batches to avoid memory issues
-            batch_size = 10
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i:i + batch_size]
+    
+            # Process chunks in batches
+            total_chunks = 0
+            for batch_start in range(0, len(chunks), batch_size):
+                # Get the current batch
+                batch_end = min(batch_start + batch_size, len(chunks))
+                current_batch = chunks[batch_start:batch_end]
                 
-                # Get embeddings for batch
-                embeddings = self.embeddings.embed_documents(batch)
-                
-                # Store chunks with embeddings
-                for idx, (chunk_text, embedding) in enumerate(zip(batch, embeddings)):
-                    chunk_id = f"{doc_id}-chunk-{i + idx}"
+                try:
+                    # Generate embeddings for the entire batch
+                    batch_embeddings = self.embeddings.embed_documents(current_batch)
                     
-                    self.neo4j.run_query(
-                        """
-                        CREATE (c:Chunk {
-                            id: $chunk_id,
-                            text: $chunk_text,
-                            embedding: $embedding,
-                            index: $idx
-                        })
-                        WITH c
-                        MATCH (d:Document {id: $doc_id})
-                        MERGE (d)-[:HAS_CHUNK]->(c)
-                        """,
-                        {
+                    # Prepare batch data
+                    batch_data = []
+                    for idx, (chunk_text, embedding) in enumerate(zip(current_batch, batch_embeddings)):
+                        global_idx = batch_start + idx
+                        chunk_id = f"{doc_id}-chunk-{global_idx}"
+                        
+                        batch_data.append({
                             "chunk_id": chunk_id,
                             "chunk_text": chunk_text,
                             "embedding": embedding,
-                            "idx": i + idx,
+                            "idx": global_idx,
                             "doc_id": doc_id
-                        }
+                        })
+                    
+                    # Store all chunks in the batch
+                    self.neo4j.run_query(
+                        """
+                        UNWIND $batch_data AS data
+                        CREATE (c:Chunk {
+                            id: data.chunk_id,
+                            text: data.chunk_text,
+                            embedding: data.embedding,
+                            index: data.idx
+                        })
+                        WITH c, data
+                        MATCH (d:Document {id: data.doc_id})
+                        MERGE (d)-[:HAS_CHUNK]->(c)
+                        """,
+                        {"batch_data": batch_data}
                     )
+                    
+                    total_chunks += len(current_batch)
+                    
+                    # Log progress
+                    progress = (batch_end / len(chunks)) * 100
+                    logging.info(f"Processing document: {progress:.1f}% complete")
+                    
+                except Exception as e:
+                    logging.error(f"Error processing batch {batch_start}-{batch_end}: {e}")
+                    # Continue with next batch instead of failing entirely
+                    continue
             
             return {
                 "status": "success",
                 "file": document_name,
-                "chunks_stored": len(chunks)
+                "chunks_stored": total_chunks,
+                "total_chunks": len(chunks)
             }
             
         except Exception as e:
             logging.error(f"Error processing document: {e}")
+            # Attempt to clean up if document node was created
+            try:
+                self.neo4j.run_query(
+                    """
+                    MATCH (d:Document {id: $doc_id})
+                    DETACH DELETE d
+                    """,
+                    {"doc_id": doc_id}
+                )
+            except:
+                pass
             return {"status": "error", "message": str(e)}
 
     def similarity_search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
