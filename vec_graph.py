@@ -4,6 +4,7 @@ import asyncio
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+import logging
 
 from sentence_transformers import SentenceTransformer #local embeddings
 
@@ -14,7 +15,7 @@ from dotenv import load_dotenv
 
 # OpenAI-specific imports from langchain-openai
 from langchain_openai import ChatOpenAI
-from langchain_openai import OpenAIEmbeddings
+#from langchain_openai import OpenAIEmbeddings
 
 # Other LangChain imports
 from langchain.vectorstores import VectorStore
@@ -25,6 +26,16 @@ from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from neo4j import GraphDatabase
 
 
+
+# Set up logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',  # Simplified format for readability
+    handlers=[
+        logging.FileHandler('graphrag.log'),  # Log to file
+        logging.StreamHandler()  # Log to console
+    ]
+)
 # -------------------------------------------------------------------------
 # Configuration
 # -------------------------------------------------------------------------
@@ -43,7 +54,7 @@ class Config:
         # OpenAI settings
         self.openai_api_key = os.getenv('OPENAI_API_KEY', '')
         self.openai_model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
-        self.openai_embedding_model = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-ada-002')
+        #self.openai_embedding_model = os.getenv('OPENAI_EMBEDDING_MODEL', 'text-embedding-ada-002')
         
         self._validate()
 
@@ -514,12 +525,28 @@ class GraphRAGProcessor:
         """Perform a RAG query with enhanced context."""
         try:
             # Get results without min_score parameter
+            logging.info(f"\n{'='*80}\nUser Query: {user_query}\n{'='*80}")
             search_results = self.similarity_search(
                 query=user_query,
                 limit=5,
                 context_window=2  # Get 2 chunks before/after
             )
-            
+            logging.info(f"\nFound {len(search_results)} relevant chunks:")
+            for i, result in enumerate(search_results, 1):
+                logging.info(f"\nChunk {i}:")
+                logging.info(f"Source: {result['source']}")
+                logging.info(f"Score: {result['score']}")
+                logging.info(f"Text: {result['chunk_text']}")
+                if result['context']['before']:
+                    logging.info("Context Before:")
+                    for ctx in result['context']['before']:
+                        logging.info(f"- {ctx}")
+                if result['context']['after']:
+                    logging.info("Context After:")
+                    for ctx in result['context']['after']:
+                        logging.info(f"- {ctx}")
+        
+
             if not search_results:
                 return {
                     "answer": "No relevant information found in the database.",
@@ -555,6 +582,12 @@ class GraphRAGProcessor:
     Context:
     {context}""".format(context=context_text)
             
+
+            # Log the complete prompt being sent to OpenAI
+            logging.info(f"\n{'='*80}\nPrompt being sent to OpenAI:\n{'='*80}")
+            logging.info(f"System Prompt:\n{system_prompt}")
+            logging.info(f"User Query: {user_query}")
+
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_query)
@@ -677,9 +710,11 @@ def main():
     processor = GraphRAGProcessor()
     chat_app = ChatInterface(processor)
     chat_app.launch()
+    logging.info()
 
 if __name__ == "__main__":
     try:
         main()
+        
     except KeyboardInterrupt:
         print("Shutting down...")
