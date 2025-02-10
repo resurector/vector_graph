@@ -1,9 +1,16 @@
-# vector_graph
-### Vector Index Creation:
+# GraphRAG: Graph-Based RAG System with Neo4j
 
-- Creates a vector index named 'chunk_embeddings' in Neo4j
-- Uses cosine similarity metric for vector comparisons
-- Dimension is set to 1536 for OpenAI embeddings
+## Overview
+GraphRAG is a document question-answering system that combines Retrieval-Augmented Generation (RAG) with graph database capabilities using Neo4j. The system processes documents, stores them as connected chunks, and provides a chat interface for querying document knowledge.
+
+## Key Features
+- Document Processing: Supports PDF, DOCX, and TXT files
+- Local Embeddings: Uses SentenceTransformer for local embedding generation
+- Graph-Based Storage: Utilizes Neo4j for storing document chunks and relationships
+- Context-Aware Retrieval: Implements sliding window context for better answers
+- Interactive Interface: Gradio-based UI for document upload and querying
+- Extensible Architecture: Modular design with clear separation of concerns
+
 
 
 ### Improved Similarity Search:
@@ -19,15 +26,6 @@
 - Ensures embeddings are stored in the correct format for the vector index
 - Maintains compatibility with your existing code structure
 
-### Improved Batch Processing
-```python
-# Instead of processing one chunk at a time:
-for idx, chunk_text in enumerate(chunks):
-    embedding = self.embeddings.embed_query(chunk_text)  # One API call per chunk
+### Local Embeddings
 
-# We could batch process:
-batch_size = 10
-for i in range(0, len(chunks), batch_size):
-    batch = chunks[i:i + batch_size]
-    embeddings = self.embeddings.embed_documents(batch)  # One API call for multiple chunks
-```
+- all-MiniLM-L6-v2: General-purpose model with 384 dimensions.
