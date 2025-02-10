@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
+from sentence_transformers import SentenceTransformer #local embeddings
+
 import fitz  # PyMuPDF for PDF
 import gradio as gr
 from docx import Document as DocxDocument
@@ -68,6 +70,35 @@ class Neo4jHelper:
         with self.driver.session() as session:
             return session.run(query, parameters or {}).data()
 
+
+# -------------------------------------------------------------------------
+# LocalEmbeddings
+# -------------------------------------------------------------------------
+
+class LocalEmbeddings:
+    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+        """
+        Initialize the local embedding model.
+        :param model_name: Name of the pre-trained model from Sentence-Transformers.
+        """
+        self.model = SentenceTransformer(model_name)
+
+    def embed_query(self, text: str) -> List[float]:
+        """
+        Generate embeddings for a single text query.
+        :param text: Input text to embed.
+        :return: List of floats representing the embedding.
+        """
+        return self.model.encode(text).tolist()
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts.
+        :param texts: List of input texts to embed.
+        :return: List of embeddings (each embedding is a list of floats).
+        """
+        return self.model.encode(texts).tolist()            
+
 # -------------------------------------------------------------------------
 # GraphRAG Processor
 # -------------------------------------------------------------------------
@@ -91,11 +122,15 @@ class GraphRAGProcessor:
         temperature=0.2,
         api_key=self.config.openai_api_key  # Explicitly pass API key
         )
-        self.embeddings = OpenAIEmbeddings(
-        model=self.config.openai_embedding_model,
-        api_key=self.config.openai_api_key  # Explicitly pass API key
-        )
+        # self.embeddings = OpenAIEmbeddings(
+        # model=self.config.openai_embedding_model,
+        # api_key=self.config.openai_api_key  # Explicitly pass API key
+        # )
         
+        # Replace OpenAIEmbeddings with LocalEmbeddings
+        self.embeddings = LocalEmbeddings(model_name='all-MiniLM-L6-v2')  # Use a local model
+
+
         self._setup_db()
 
     def _setup_db(self):
@@ -111,13 +146,15 @@ class GraphRAGProcessor:
                 self.neo4j.run_query(constraint)
             
             # Create vector index
+
+            #updated code here to match local embedding dimensions from 1536 to 384
             vector_index = """
             CREATE VECTOR INDEX chunk_embeddings IF NOT EXISTS
             FOR (c:Chunk)
             ON (c.embedding)
             OPTIONS {
                 indexConfig: {
-                    `vector.dimensions`: 1536,
+                    `vector.dimensions`: 384,
                     `vector.similarity_function`: 'cosine'
                 }
             }
