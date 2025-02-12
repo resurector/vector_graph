@@ -87,7 +87,7 @@ class LocalEmbeddings:
     A wrapper around SentenceTransformers to provide local embeddings.
     Replaces the OpenAIEmbeddings for offline or cost-effective usage.
     """
-    def __init__(self, model_name: str = 'all-MiniLM-L6-v2'):
+    def __init__(self, model_name: str = 'all-mpnet-base-v2'):  # Updated model name
         self.model = SentenceTransformer(model_name)
 
     def embed_query(self, text: str) -> List[float]:
@@ -141,7 +141,7 @@ class GraphRAGProcessor:
         
         
         # Using local embeddings instead:
-        self.embeddings = LocalEmbeddings(model_name='all-MiniLM-L6-v2')
+        self.embeddings = LocalEmbeddings(model_name='all-mpnet-base-v2')
 
         # Ensure database constraints and indexes are in place
         self._setup_db()
@@ -164,7 +164,7 @@ class GraphRAGProcessor:
             ON (c.embedding)
             OPTIONS {
                 indexConfig: {
-                    `vector.dimensions`: 384,
+                    `vector.dimensions`: 768,
                     `vector.similarity_function`: 'cosine'
                 }
             }
