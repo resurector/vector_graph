@@ -561,8 +561,34 @@ class GraphRAGProcessor:
             HumanMessage(content=f"Context:\n{context}\n\nQuestion: {query}")
         ]
 
+            # -------------------------------------------------------
+        # LOG THE PROMPT CONTENTS TO A FILE
+        # -------------------------------------------------------
+        with open("openai_log.txt", "a", encoding="utf-8") as f:
+            f.write("\n===================== NEW REQUEST =====================\n")
+            f.write("System Prompt:\n")
+            f.write(system_prompt + "\n\n")
+            f.write("User Query:\n")
+            f.write(query + "\n\n")
+            f.write("Context Sent to Model:\n")
+            f.write(context + "\n")
+            f.write("=======================================================\n")
+    
+        # Actually send the messages to OpenAI via langchain's ChatOpenAI
         response = await self.chat_model.agenerate([[m for m in messages]])
-        return response.generations[0][0].text.strip()
+    
+        # Extract the text from the response object
+        answer = response.generations[0][0].text.strip()
+    
+        # -------------------------------------------------------
+        # LOG THE OPENAI RESPONSE
+        # -------------------------------------------------------
+        with open("openai_log.txt", "a", encoding="utf-8") as f:
+            f.write("LLM Response:\n")
+            f.write(answer + "\n")
+            f.write("=======================================================\n")
+    
+        return answer
 
 
 # ------------------------------------------------------------------------------
