@@ -14,7 +14,7 @@ from langchain_openai import ChatOpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import SystemMessage, HumanMessage
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, AsyncGraphDatabase
 from sentence_transformers import SentenceTransformer
 
 
@@ -66,22 +66,13 @@ class Config:
 # Neo4j Helper
 # ------------------------------------------------------------------------------
 class Neo4jHelper:
-    """
-    Small helper class to handle Neo4j connections & queries.
-    """
     def __init__(self, uri: str, user: str, password: str):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+        self.driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
-    def close(self):
-        self.driver.close()
-
-    def run_query(self, query: str, parameters: Optional[Dict] = None):
-        """
-        Run a Cypher query with optional parameters.
-        Returns the result in .data() form.
-        """
-        with self.driver.session() as session:
-            return session.run(query, parameters or {}).data()
+    async def run_query(self, query: str, parameters: Optional[Dict] = None):
+        async with self.driver.session() as session:
+            result = await session.run(query, parameters or {})
+            return await result.data()
 
 
 # ------------------------------------------------------------------------------
@@ -605,7 +596,7 @@ class ChatInterface:
         self.interface = self._setup_gradio()
 
     def _setup_gradio(self) -> gr.Blocks:
-        with gr.Blocks(title="GraphRAG", theme=gr.themes.Soft()) as demo:
+        with gr.Blocks(title="GraphRAG", theme=gr.themes.Glass()) as demo:
             gr.Markdown("# GraphRAG: Ask Your Documents in Neo4j")
 
             # ----------- Chat Tab -----------
