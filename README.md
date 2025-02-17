@@ -48,8 +48,8 @@ GraphRAG uses a multi-component architecture:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/graphrag.git
-cd graphrag
+git clone https://github.com/resurector/vector_graph.git
+cd vector_graph
 ```
 
 2. Create and activate a virtual environment:
@@ -76,7 +76,7 @@ OPENAI_MODEL=gpt-3.5-turbo
 
 1. Start the application:
 ```bash
-python graphrag.py
+python vector_2.py
 ```
 
 2. Access the web interface at `http://localhost:7860`
@@ -180,12 +180,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
    - Adjust vector similarity thresholds
    - Check Neo4j index usage
 
-## Support
 
-For support, please:
-1. Check the issues section
-2. Review troubleshooting guide
-3. Open a new issue with:
-   - Detailed problem description
-   - Error messages
-   - System configuration
