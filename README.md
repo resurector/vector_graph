@@ -1,31 +1,191 @@
-# GraphRAG: Graph-Based RAG System with Neo4j
+# GraphRAG
 
-## Overview
-GraphRAG is a document question-answering system that combines Retrieval-Augmented Generation (RAG) with graph database capabilities using Neo4j. The system processes documents, stores them as connected chunks, and provides a chat interface for querying document knowledge.
+GraphRAG is a powerful Retrieval-Augmented Generation (RAG) system that uses Neo4j graph database for efficient document storage, retrieval, and querying. It combines the power of graph databases, vector embeddings, and large language models to provide intelligent responses based on your document corpus.
 
-## Key Features
-- Document Processing: Supports PDF, DOCX, and TXT files
-- Local Embeddings: Uses SentenceTransformer for local embedding generation
-- Graph-Based Storage: Utilizes Neo4j for storing document chunks and relationships
-- Context-Aware Retrieval: Implements sliding window context for better answers
-- Interactive Interface: Gradio-based UI for document upload and querying
-- Extensible Architecture: Modular design with clear separation of concerns
+## Features
 
+- 📄 Multi-format document support (PDF, DOCX, TXT)
+- 🔍 Intelligent chunking with configurable sizes and overlap
+- 📊 Graph-based document representation
+- 🧮 Local embeddings using Sentence Transformers
+- 💾 Semantic caching for faster responses
+- 🔗 Context-aware retrieval with document linkages
+- 🚀 Gradio-based interactive interface
+- ⚡ Asynchronous processing
 
+## Architecture
 
-### Improved Similarity Search:
+GraphRAG uses a multi-component architecture:
 
-- Replaces manual dot product calculations with Neo4j's native vector search
-- Uses the vector index for faster and more efficient similarity calculations
-- Returns properly formatted results matching your existing structure
+1. **Document Processing**:
+   - Extracts text from multiple document formats
+   - Chunks text with configurable size and overlap
+   - Generates embeddings using Sentence Transformers
 
+2. **Storage Layer**:
+   - Neo4j graph database for document and chunk storage
+   - Vector indexing for similarity search
+   - Semantic caching for query responses
 
-### Optimized Document Processing:
+3. **Retrieval Engine**:
+   - Hybrid search combining vector similarity and text relevance
+   - Context-aware retrieval with surrounding chunks
+   - Enhanced ranking system
 
-- Adds batch processing for embeddings to manage memory better
-- Ensures embeddings are stored in the correct format for the vector index
-- Maintains compatibility with your existing code structure
+4. **Interface**:
+   - Gradio-based web interface
+   - Chat interface for queries
+   - Document upload and processing capabilities
 
-### Local Embeddings
+## Prerequisites
 
-- all-MiniLM-L6-v2: General-purpose model with 384 dimensions.
+- Python 3.8+
+- Neo4j 4.4+ with Graph Data Science Library
+- OpenAI API key
+- Required Python packages (see requirements.txt)
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/graphrag.git
+cd graphrag
+```
+
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install required packages:
+```bash
+pip install -r requirements.txt
+```
+
+4. Set up environment variables in `.env`:
+```env
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=your_password
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-3.5-turbo
+```
+
+## Usage
+
+1. Start the application:
+```bash
+python graphrag.py
+```
+
+2. Access the web interface at `http://localhost:7860`
+
+3. Upload documents through the "Process Document" tab
+
+4. Ask questions about your documents in the "Chat" tab
+
+## Configuration
+
+Key configuration options in `Config` class:
+
+```python
+class Config:
+    def __init__(self):
+        self.neo4j_uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+        self.neo4j_username = os.getenv('NEO4J_USERNAME', 'neo4j')
+        self.neo4j_password = os.getenv('NEO4J_PASSWORD', '')
+        self.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+        self.openai_model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+```
+
+## API Reference
+
+### Document Processing
+
+```python
+async def process_document(self, file_path: str, chunk_size: int = 500, chunk_overlap: int = 100) -> Dict
+```
+Processes a document and stores it in the graph database.
+
+### Query Processing
+
+```python
+async def query_knowledge(self, user_query: str) -> Dict[str, Any]
+```
+Queries the knowledge base and returns relevant information.
+
+## Performance Optimization
+
+1. **Chunk Size Optimization**:
+   - Default: 500 characters
+   - Adjust based on document type and content density
+   - Balance between context preservation and retrieval precision
+
+2. **Vector Search**:
+   - Uses Neo4j's vector index for similarity search
+   - Configurable similarity threshold
+   - Hybrid ranking combining vector and text similarity
+
+3. **Caching**:
+   - Semantic caching for similar queries
+   - Configurable cache duration
+   - Cache invalidation on document updates
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Neo4j for graph database capabilities
+- OpenAI for language model integration
+- Sentence Transformers for local embeddings
+- Gradio for the web interface
+
+## Future Improvements
+
+- [ ] Add support for more document formats
+- [ ] Implement advanced caching strategies
+- [ ] Add document update/delete capabilities
+- [ ] Enhance query relevance ranking
+- [ ] Add batch processing for large document sets
+- [ ] Implement user authentication
+- [ ] Add API endpoints for programmatic access
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Neo4j Connection**:
+   - Ensure Neo4j is running and accessible
+   - Check credentials in `.env`
+   - Verify GDS library installation
+
+2. **Document Processing**:
+   - Check file permissions
+   - Verify supported file formats
+   - Monitor chunking parameters
+
+3. **Query Performance**:
+   - Optimize chunk sizes
+   - Adjust vector similarity thresholds
+   - Check Neo4j index usage
+
+## Support
+
+For support, please:
+1. Check the issues section
+2. Review troubleshooting guide
+3. Open a new issue with:
+   - Detailed problem description
+   - Error messages
+   - System configuration
